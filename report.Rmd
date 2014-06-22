@@ -1,0 +1,70 @@
+(Coursera) Practical Machine Learning Project Write-up
+==============================================================================
+
+<big>
+**Ivan Ngeow**  
+**21 Jun 2014**
+</big>
+
+how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did
+
+exploratory analysis
+feature selection: NZV, removing NA columns, are the outcome classes balanced?
+data preprocessing, partitioning
+model training, performance on CV
+model selection and fine-tuning
+performance on validation set: can't ROC because 5 classes
+
+Trade-off in training an accurate model due to time, CPU resources, memory.
+
+```{r setup, include=FALSE}
+opts_knit$set(progress=FALSE, verbose=FALSE, width=90)
+opts_chunk$set(message=FALSE, tidy=TRUE, highlight=TRUE, fig.align="center")
+```
+
+```{r prepareData}
+    a <- read.csv('pml-training.csv', stringsAsFactors=F)
+    a$classe <- as.factor(a$classe)
+
+    ## remove columns with NA
+    na.counts <- apply(a, 2, function(x) length(which(is.na(x))))
+
+    ## remove nzv columns
+    nzv.cols <- nearZeroVar(a)#,saveMetrics=TRUE)
+
+    exclude.cols <- union(which(na.counts!=0), c(1:7,nzv.cols))
+    a <- a[, -exclude.cols ]
+
+    ## partition
+    inTrain <- createDataPartition(y=a$classe, p=0.85, list=T)[[1]]
+    
+    training <- a[inTrain,]
+    testing <- a[-inTrain,]
+```
+
+A summary of Markdown syntax is available when editing R Markdown documents
+under RStudio, or on this [Markdown Cheatsheet](http://goo.gl/6ThPR7).
+
+To compile this document, you can use the following commands in R:
+
+    library(knitr)
+    library(markdown)
+    knit("template.Rmd", quiet=TRUE)
+    markdownToHTML("template.md", "template.html", option=c("highlight_code", "toc"), title="Simple R Markdown template")
+    browseURL("template.html")
+
+```{r mtry, fig.width=6, fig.height=6}
+tc <- trainControl(method = "cv", number = 3, returnResamp='all')
+small <- training[sample(1:nrow(training), 1000),]
+plot(train(small[, pred.cols], small$classe, method='rf', ntree=2000, tuneGrid=data.frame(mtry=2:13), trControl=tc))
+```
+
+```{r train}
+## use entire training set to train
+tc <- trainControl(method = "cv", number = 3, returnResamp='all')
+fit <- train(training[, pred.cols], training$classe, method='rf', ntree=2000, tuneGrid=data.frame(mtry=8:10), trControl=tc)
+
+## now test on the hold-out set to obtain out-of-sample metrics
+prediction <- predict(fit, newdata=testing)
+print(confusionMatrix(prediction, testing$classe), digits=4)
+```
