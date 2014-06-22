@@ -1,70 +1,129 @@
-(Coursera) Practical Machine Learning Project Write-up
+(Coursera) Practical Machine Learning  
+Project Report
 ==============================================================================
 
 <big>
 **Ivan Ngeow**  
-**21 Jun 2014**
+**22 Jun 2014**
 </big>
 
-how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did
+The course project involved building and validating a classification model given a set of training data. The dataset contains various parameters derived from accelerometers placed on different parts of humans performing barbell lifts.
 
-exploratory analysis
-feature selection: NZV, removing NA columns, are the outcome classes balanced?
-data preprocessing, partitioning
-model training, performance on CV
-model selection and fine-tuning
-performance on validation set: can't ROC because 5 classes
+This project was undertaken as a component of the Practical Machine Learning course at Coursera https://class.coursera.org/predmachlearn-002
 
-Trade-off in training an accurate model due to time, CPU resources, memory.
+This report consists of the following sections:
+- exploratory analysis and feature selection
+- data preprocessing and partitioning
+- model training
+- model selection and fine-tuning
+- model performance
 
 ```{r setup, include=FALSE}
 opts_knit$set(progress=FALSE, verbose=FALSE, width=90)
-opts_chunk$set(message=FALSE, tidy=TRUE, highlight=TRUE, fig.align="center")
+opts_chunk$set(message=FALSE, tidy=TRUE, highlight=TRUE, fig.align="center", cache=TRUE)
 ```
 
-```{r prepareData}
-    a <- read.csv('pml-training.csv', stringsAsFactors=F)
-    a$classe <- as.factor(a$classe)
+Exploratory analysis and feature selection
+--------------------
+```{r}
+a <- read.csv('pml-training.csv', stringsAsFactors=F)
+```
 
-    ## remove columns with NA
+The raw data consists of `r nrow(a)` rows of case samples, each with `r ncol(a)` columns of variables. The first 7 columns appear unrelated to accelerometer output.
+
+```{r}
+names(a)[1:7]
+```
+
+The last column 'classe' is the outcome variable, which we coerce into a factor. This is important for dual-use caret models, so that they perform classification instead of regression. We check that the outcomes are not overly imbalanced, which can result in classification bias.
+
+```{r fig.width=6, fig.height=4}
+a$classe <- as.factor(a$classe)
+
+## are the outcomes balanced? (ie approx equal-sized groups for each level)
+barplot(table(a$classe), main="Size of each outcome class")
+```
+
+The remaining columns are associated with accelerometer outputs. They can be grouped by the 4 body parts (belt, arm, forearm, dumbbell). Each group contains a similar set of features (yaw, roll, accel, etc).
+
+The task in this project involves classifying the type of exercise the human subject is performing, using accelerometer outputs. We thus exclude the first 7 columns and rely exclusively on the accelerometer-related columns for prediction.
+
+Data preprocessing and partitioning
+-------------------------
+
+Many of these columns contain predominantly NA, which are not useful in training the model. There are also columns with mostly similar values; these are identified by the nearZeroVar() function in caret. We remove mostly-NA and near-zero variance columns from the dataset:
+
+```{r feature}
+    ## find columns with NA
     na.counts <- apply(a, 2, function(x) length(which(is.na(x))))
 
-    ## remove nzv columns
+    ## find nzv columns
     nzv.cols <- nearZeroVar(a)#,saveMetrics=TRUE)
 
+    ## remove such columns from training set
     exclude.cols <- union(which(na.counts!=0), c(1:7,nzv.cols))
     a <- a[, -exclude.cols ]
-
-    ## partition
-    inTrain <- createDataPartition(y=a$classe, p=0.85, list=T)[[1]]
-    
-    training <- a[inTrain,]
-    testing <- a[-inTrain,]
 ```
 
-A summary of Markdown syntax is available when editing R Markdown documents
-under RStudio, or on this [Markdown Cheatsheet](http://goo.gl/6ThPR7).
+This leaves us with `r ncol(a)-1` feature columns to train the model with.
 
-To compile this document, you can use the following commands in R:
+We next divide the dataset into training and testing sets -- here, 'testing' refers to estimating the out-of-sample error rate of the model. This will give us an indication of how well the model will perform in the 20 fixed test cases prescribed for the project assessment.
 
-    library(knitr)
-    library(markdown)
-    knit("template.Rmd", quiet=TRUE)
-    markdownToHTML("template.md", "template.html", option=c("highlight_code", "toc"), title="Simple R Markdown template")
-    browseURL("template.html")
+```{r preprocess}
+library(caret)
 
-```{r mtry, fig.width=6, fig.height=6}
+## partition
+inTrain <- createDataPartition(y=a$classe, p=0.85, list=T)[[1]]
+
+training <- a[inTrain,]
+testing <- a[-inTrain,]
+```
+
+Using a split of 0.85/0.15, we have `r nrow(training)` training cases, and `r nrow(testing)` testing cases.
+
+The more training samples we have, the more accurate the model, and the longer it takes to train the model. We now proceed to find a model that yields satisfactory accuracy yet does not consume exorbitant resources (time and memory) to train.
+
+
+Model training
+--------------
+
+In my preliminary trials I explored various classification models offered by the caret package, including rpart, rpart2, gbm, and RRF. I eventually settled on rf, the random forest approach by Breiman and Cutler (trademark acknowledged), as it proved superior in performance and training times were modest even on my ageing hardware.
+
+A large part of model training was spent trying out various caret options and observing their effects on model performance. The rf model takes only one parameter, 'mtry' (number of variables randomly sampled as candidates at each split) in the train() function call. By default, train() builds models at 3 parameter levels. For a dataset with 52 feature variables, this translates to 'mtry' of 2, 26, and 52.
+
+It is possible that values of 'mtry' intermediate to these may yield superior performance. To locate a range of such values, I built models for mtry between 2 and 13 (higher values were also attempted, but not reported here), subsampling the training set and sacrificing accuracy for speed. 3-fold cross-validation without repeat gave fair estimates without prolonging the time needed.
+
+```{r mtry, fig.width=6, fig.height=4}
 tc <- trainControl(method = "cv", number = 3, returnResamp='all')
 small <- training[sample(1:nrow(training), 1000),]
-plot(train(small[, pred.cols], small$classe, method='rf', ntree=2000, tuneGrid=data.frame(mtry=2:13), trControl=tc))
+#fit.small <- train(small[, -53], small$classe, method='rf', ntree=2000, tuneGrid=data.frame(mtry=2:13), trControl=tc)
+plot(fit.small, xlab='mtry')
 ```
 
-```{r train}
+I then built the final rf model on the entire training set, using the optimal range of 'mtry' values. I also specified to build forests of 2000 trees, which would improve the coverage over the feature variables. I used 3-fold cross-validation again -- I was satisfied with the accuracy and saw no need to increase the number of folds or repeats. These are the in-sample performance metrics:
+
+```{r final}
 ## use entire training set to train
 tc <- trainControl(method = "cv", number = 3, returnResamp='all')
-fit <- train(training[, pred.cols], training$classe, method='rf', ntree=2000, tuneGrid=data.frame(mtry=8:10), trControl=tc)
+#fit <- train(training[, -53], training$classe, method='rf', ntree=2000, tuneGrid=data.frame(mtry=8:10), trControl=tc)
+print(fit, digits=4)
+```
 
+Model performance
+--------------
+
+At this point we can expect the out-of-sample accuracy to be slightly less than the above 99.39%. We put our model to the test by making predictions on the testing set, which has been completely untouched during model training.
+
+```{r predict}
 ## now test on the hold-out set to obtain out-of-sample metrics
 prediction <- predict(fit, newdata=testing)
 print(confusionMatrix(prediction, testing$classe), digits=4)
 ```
+
+It appears that our model has obtained full marks in this test. All credits are due to Breiman and Cutler's random forest!
+
+
+Conclusion
+----------
+
+In the course of this project, I learnt a lot about each step in the process of building machine learning models, particularly on tuning the random forest model, and the value of cross-validation. R documentation for caret and randomForest packages are excellent, supplemented by reading materials from the course, and reinforced through interactions with peers in the forums.
